@@ -3,22 +3,39 @@ from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
 import pymupdf
 import os
+import threading
+import time
+from PIL import Image, ImageTk
+
+# ------------------ FONCTIONS ------------------
 
 def lister_pdf(dossier):
-    return list(Path(dossier).glob("*.pdf"))
+    if recursive_var.get():
+        return list(Path(dossier).rglob("*.pdf"))
+    else:
+        return list(Path(dossier).glob("*.pdf"))
 
-def ouvrir_pdf(event):
-    selection = result_box.curselection()
-    if not selection:
+def ouvrir_pdf_tree(event):
+    item = result_tree.selection()
+    if not item:
         return
+    pdf_path = result_tree.item(item[0], "values")[1]
+    if os.path.isfile(pdf_path):
+        os.startfile(pdf_path)
+    else:
+        messagebox.showerror("Erreur", "Le fichier PDF n'existe plus.")
 
-    item = result_box.get(selection[0])
-    if item.startswith("Trouvé dans : "):
-        pdf_path = item.replace("Trouvé dans : ", "").strip()
-        if os.path.isfile(pdf_path):
-            os.startfile(pdf_path)
-        else:
-            messagebox.showerror("Erreur", "Le fichier PDF n'existe plus.")
+def notifier_fin():
+    # Popup
+    messagebox.showinfo("Terminé", "La recherche est terminée.")
+
+    # Clignotement du bouton
+    def blink():
+        original = btn_search.cget("text")
+        btn_search.config(text="✔ Terminé ✔")
+        root.after(800, lambda: btn_search.config(text=original))
+
+    blink()
 
 def rechercher():
     search = entry_search.get().strip()
@@ -33,12 +50,24 @@ def rechercher():
         messagebox.showwarning("Attention", "Veuillez entrer un texte à rechercher.")
         return
 
-    result_box.delete(0, tk.END)
+    # Nettoyage des résultats
+    for item in result_tree.get_children():
+        result_tree.delete(item)
+
     pdfs = lister_pdf(folder)
 
     progress_bar["maximum"] = len(pdfs)
     progress_bar["value"] = 0
     root.update_idletasks()
+
+    # Multi-mots
+    terms = search.split()
+
+    def match_all(text):
+        return all(t.lower() in text.lower() for t in terms)
+
+    def match_any(text):
+        return any(t.lower() in text.lower() for t in terms)
 
     for pdf in pdfs:
         try:
@@ -48,28 +77,43 @@ def rechercher():
             if mode == "Page de garde":
                 if len(doc) > 0:
                     text = doc[0].get_text()
-                    if search.lower() in text.lower():
-                        found = True
+                    if logic_var.get() == "ET":
+                        found = match_all(text)
+                    else:
+                        found = match_any(text)
             else:
                 for page in doc:
                     text = page.get_text()
-                    if search.lower() in text.lower():
-                        found = True
+                    if logic_var.get() == "ET":
+                        found = match_all(text)
+                    else:
+                        found = match_any(text)
+                    if found:
                         break
 
             if found:
-                result_box.insert(tk.END, f"Trouvé dans : {pdf}")
+                result_tree.insert("", tk.END, values=(pdf.name, str(pdf)))
 
             doc.close()
 
         except Exception as e:
-            result_box.insert(tk.END, f"Erreur avec {pdf}: {e}")
+            result_tree.insert("", tk.END, values=("Erreur", f"{pdf} : {e}"))
 
         progress_bar["value"] += 1
         root.update_idletasks()
 
-    if result_box.size() == 0:
-        result_box.insert(tk.END, "Aucun résultat trouvé.")
+        # Micro pause pour éviter le freeze
+        time.sleep(0.001)
+
+    notifier_fin()
+
+    if len(result_tree.get_children()) == 0:
+        result_tree.insert("", tk.END, values=("Aucun résultat", ""))
+
+
+def lancer_recherche_thread():
+    thread = threading.Thread(target=rechercher, daemon=True)
+    thread.start()
 
 def choisir_dossier():
     dossier = filedialog.askdirectory()
@@ -98,8 +142,14 @@ def apply_dark_mode():
                     troughcolor="#2b2b2b",
                     background=accent)
 
-    result_box.configure(bg="#2b2b2b", fg=fg_light,
-                         selectbackground=accent, selectforeground="white")
+    # Treeview
+    style.configure("Treeview",
+                    background="#2b2b2b",
+                    foreground=fg_light,
+                    fieldbackground="#2b2b2b")
+    style.map("Treeview",
+              background=[("selected", accent)],
+              foreground=[("selected", "white")])
 
 def apply_light_mode():
     root.configure(bg="#f0f0f0")
@@ -117,8 +167,13 @@ def apply_light_mode():
                     troughcolor="#e0e0e0",
                     background="#3a7bd5")
 
-    result_box.configure(bg="white", fg="black",
-                         selectbackground="#3a7bd5", selectforeground="white")
+    style.configure("Treeview",
+                    background="white",
+                    foreground="black",
+                    fieldbackground="white")
+    style.map("Treeview",
+              background=[("selected", "#3a7bd5")],
+              foreground=[("selected", "white")])
 
 def change_theme(event=None):
     mode = theme_var.get()
@@ -131,7 +186,18 @@ def change_theme(event=None):
 
 root = tk.Tk()
 root.title("Recherche documentaire PDF")
-root.geometry("750x550")
+root.geometry("900x600")
+
+try:
+    logo_img = Image.open("../logo.png")  # chemin vers ton PNG
+    logo_img = logo_img.resize((80, 80), Image.LANCZOS)  # taille du logo
+    logo_photo = ImageTk.PhotoImage(logo_img)
+
+    # Placement en haut à droite
+    logo_label = tk.Label(root, image=logo_photo, bg=root["bg"])
+    logo_label.place(relx=1.0, y=10, anchor="ne")
+except Exception as e:
+    print("Erreur chargement logo :", e)
 
 style = ttk.Style()
 
@@ -162,7 +228,7 @@ btn_folder.pack(side=tk.LEFT)
 frame_search = ttk.Frame(root, padding=10)
 frame_search.pack(fill="x")
 
-ttk.Label(frame_search, text="Texte dans la PDG :").pack(side=tk.LEFT)
+ttk.Label(frame_search, text="Texte à rechercher :").pack(side=tk.LEFT)
 entry_search = ttk.Entry(frame_search, width=30)
 entry_search.pack(side=tk.LEFT, padx=5)
 
@@ -174,34 +240,43 @@ search_mode_menu = ttk.Combobox(frame_search, textvariable=search_mode_var,
                                 width=15, state="readonly")
 search_mode_menu.pack(side=tk.LEFT)
 
-btn_search = ttk.Button(root, text="Lancer la recherche", command=rechercher)
+# Options avancées
+frame_options = ttk.Frame(root, padding=10)
+frame_options.pack(fill="x")
+
+ttk.Label(frame_options, text="Logique :").pack(side=tk.LEFT)
+logic_var = tk.StringVar(value="ET")
+logic_menu = ttk.Combobox(frame_options, textvariable=logic_var,
+                          values=["ET", "OU"], width=10, state="readonly")
+logic_menu.pack(side=tk.LEFT, padx=10)
+
+recursive_var = tk.BooleanVar(value=False)
+chk_recursive = ttk.Checkbutton(frame_options, text="Inclure sous-dossiers",
+                                variable=recursive_var)
+chk_recursive.pack(side=tk.LEFT, padx=10)
+
+btn_search = ttk.Button(root, text="Lancer la recherche", command=lancer_recherche_thread)
 btn_search.pack(pady=10)
 
 # Barre de progression
 progress_bar = ttk.Progressbar(root, length=600)
 progress_bar.pack(pady=10)
 
-# Résultats
-ttk.Label(root, text="Résultats :").pack()
-
-# Frame pour la listbox + scrollbar
+# Résultats améliorés
 result_frame = ttk.Frame(root)
 result_frame.pack(fill="both", expand=True, pady=10)
 
-scrollbar = ttk.Scrollbar(result_frame)
-scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+columns = ("fichier", "chemin")
+result_tree = ttk.Treeview(result_frame, columns=columns, show="headings")
+result_tree.heading("fichier", text="Nom du fichier")
+result_tree.heading("chemin", text="Chemin complet")
 
-result_box = tk.Listbox(
-    result_frame,
-    height=15,
-    width=0,  # auto-ajustement
-)
-result_box.pack(side=tk.LEFT, fill="both", expand=True)
+result_tree.column("fichier", width=200)
+result_tree.column("chemin", width=600)
 
-result_box.config(yscrollcommand=scrollbar.set)
-scrollbar.config(command=result_box.yview)
+result_tree.pack(fill="both", expand=True)
 
-result_box.bind("<Double-Button-1>", ouvrir_pdf)
+result_tree.bind("<Double-Button-1>", ouvrir_pdf_tree)
 
 # Appliquer le thème initial
 apply_dark_mode()
