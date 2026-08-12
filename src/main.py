@@ -6,6 +6,7 @@ import os
 import threading
 import time
 from PIL import Image, ImageTk
+from unidecode import unidecode
 
 # ------------------ FONCTIONS ------------------
 
@@ -38,7 +39,7 @@ def notifier_fin():
     blink()
 
 def rechercher():
-    search = entry_search.get().strip()
+    search = unidecode(entry_search.get().strip())
     folder = folder_var.get()
     mode = search_mode_var.get()
 
@@ -76,14 +77,14 @@ def rechercher():
 
             if mode == "Page de garde":
                 if len(doc) > 0:
-                    text = doc[0].get_text()
+                    text = unidecode(doc[0].get_text())
                     if logic_var.get() == "ET":
                         found = match_all(text)
                     else:
                         found = match_any(text)
             else:
                 for page in doc:
-                    text = page.get_text()
+                    text = unidecode(page.get_text())
                     if logic_var.get() == "ET":
                         found = match_all(text)
                     else:
